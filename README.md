@@ -27,42 +27,20 @@ The world can be of any dimensions and shape - it does not need to be uniform. E
 
 ## Algorithm Explained
 
-Problem B provides some complexity... Through brute force, and defining n as count of non-immune cells within a world, the search time complexity is O(2^n).
+Problem B provides some complexity... Through brute force, and defining n as count of non-immune cells within a world, the search time complexity is O(2^n), expodential time. 
 
 ### An Iterative Solution...
 
-A quicker solution than brute force is to use a randomized iterative threshold approach. To solve, we would decide on some threshold 't' where we will say "that within 't' attempts of randomized world states that infects 'i' vunerable people of aim to infect the entire population, that if we do not find a solution, we can assume i + 1 sick people will provide the best optimization possible, assuming that 't' is large enough". Here, we would start with a high 'i' value relative to 'n' and we would decrement 'i' each time we find a solution within 't' attempts. 
+A quicker solution than brute force is to use a randomized iterative threshold approach. To solve, we would decide on some threshold 't' where we will say that "within 't' attempts of randomized world states that infects 'i' vunerable people of aim to infect the entire population, that if we do not find a solution, we can assume i + 1 sick people will provide the best optimization possible, assuming that 't' is large enough". Here, we would start with a high 'i' value relative to 'n' and we would decrement 'i' each time we find a solution within 't' attempts.
 
-There are two issues I have with this solution...
+The first question we need to ask is what would be an appropriate threshold for 't'? One way is that we could guess upon a resonable threshold, that is to say, "I would think 10,000,000 would be a large number of attempts to try find a solution, so I think that should be good". This can work, but it is wishful and nieve to the full extend of the data.
 
-The first, what would be an appropriate threshold for 't'? One way is that we could guess upon a resonable threshold, that is "I would think 1,000,000 is a large number of attempts to try find a solution, so I think that should be good". Another way is to instead provide a threshold of time rather than attempts. We might say "if the algorithm cannot find a solution within 10 minutes, then we assume the best possible optimization is the one previously found". A final means would be to use statistics. 
+Another way that provides some inference to our decision would be to choose a percentage of all the possible states we could search, and to then conclude it is unlikely that we will find a solution if we search any further. For example, using a world where n=100, we will find that 0.01% of the total possible permutations is (0.01 * 2^100) / 100 'approx' = 1.27e+26 world states. Now, we could choose this number to be our upper limit. 
 
-For example, we could look at an inital world state with n=100, we could look and s  , assuming that all of our random guesses made are unique.
+Another way is to instead provide a threshold of time rather than attempts. We might say "if the algorithm cannot find a solution within 48 hours, then we assume the best possible optimization is the one previously found". This can work best in cases where it is hard to estimate how long searching to an attempt threashold can take.
 
-I guess that 
+An issue with using this technique is that for trying to find optimized solutions when 'n' is high, we are unlikely to find a result when running the algorithm for long periods of time. For example if 'n'=100 and 'i'=20, and with the possible world shape and arrangement of immune people provided a small number of 1 trillion solutions, this provides just 7.8e-18 of the all the possible solutions. It can be expected that the most extreme optimizations of i, the number of possible solutions will tend towards zero (but never equal). Hence, using such an algorithm relies on - a great deal of - luck for finding an optimal solution.
 
-The theory of large numbers applies. 
+It should point out that choosing such an algorithm neglects the possibility that an optimal or near-optimal deterministic solution exists.
 
-look back at previous attempts
-
-
-This leads to me to my second point, if there is an extremely low probability of randoming finding an optimal solution, why don't we try another solution? 
-
-we define a time range and match a compute a threshold and estimate a threashold. 
-or we can estimate an effective threashold. 
-how do we know how effective  
-
-First, how do we know what to assign as an appropriate threshold for 't'. One way to solve this is with statistics. In a world where n=1000 and i=100, out of the possible 2^100 solutions that exist, only 10 initial world states would satisfy the world. This creates a success chance of 7.89e-30 per random state to win. 
-We could say 10,000 or maybe 100,000 or more. 
-The benifit with this is that we don't incur the risk of path traversals. 
-
-One issue is that as 'i' gets smaller, the amount of potential working states reduces, making it very unlikely or impossible 
-
-Secondly, there is always the possiblity at any threashold that the chance of the optimal solution not being found exists. Statisically, given high 'i' - lots of possible solutions to be found - and high 'n'. 
-
-this in reduced Instead of solving the second mode through means of randomized iterative  TODO find actual name... the algorithm uses an optimal solve approach through means quicker than brute force.
-
-Creates every permutation with two people? (check this) 
-Then add
-
-
+### A Path search
