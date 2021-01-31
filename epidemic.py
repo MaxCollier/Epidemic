@@ -2,7 +2,6 @@ import numpy as np
 import math
 import sys
 
-
 SICK_KEY = 'S'
 SICK = 1
 
@@ -27,7 +26,7 @@ state_decoder = {
 
 def make_hash(state):
     """
-    Loops through array, encoding each each state through a single line string representation.
+    Hashes a given world state.
     """
 
     key = ""
@@ -39,57 +38,74 @@ def make_hash(state):
     return key
 
 
-def create_task(universe, has_sick):
+def create_task(state, has_sick):
+    """
+    Creates a 'task' based on the state of the state. Tasks are to be used by the 'main' function for running the selected
+    algorithm (mode a or b). 
 
-    row_lens = np.array([ len(row) for row in universe ])
+    Parameters
+    ----------
+    state : np.array
+        current world state
 
-    # no map manipulation required
+    state : np.array
+        current world state
+
+    Returns
+    -------
+    object :    
+        state : np.array
+            initial world state
+        mask : np.array
+            identifies sick and immune existing individuals
+        has_sick : bool
+            whether any cell contains a sick person
+
+    """
+
+    row_lens = np.array([ len(row) for row in state ])
+
+    # unifromly shaped world state, no map manipulation required
     if np.all(row_lens == row_lens[0]):
         return {
-            'state': np.array(universe),
+            'state': np.array(state),
             'has_sick': has_sick,
-            'world_mask': np.ones(np.array(universe).shape, dtype=np.bool)
+            'world_mask': np.ones(np.array(state).shape, dtype=np.bool)
         }
 
+    # TODO check if this works correctly.. No if statement so it might blank out 
     world_mask = []
-    new_universe = []
+    new_state = []
     len_target = np.max(row_lens)
-
-    for i, (row, row_len) in enumerate(zip(universe, row_lens)):
+    for i, (row, row_len) in enumerate(zip(state, row_lens)):
         row_mask = [ True for _ in range(row_len) ]
         for j in range(row_len, len_target):
             row.append(IMMUNE)
             row_mask.append(False)
-        new_universe.append(row)
+        new_state.append(row)
         world_mask.append(row_mask)
 
-
     return {
-        'state': np.array(new_universe),
         'has_sick': has_sick,
+        'state': np.array(new_state),
         'world_mask': np.array(world_mask, dtype=np.bool),
     }
     
 
-
 def read_input():
     """
-    Reads universes from input files and encodes in a numpy arrays. Universes will also be flagged if sick people
-    exist within the population.
+    Reads initial world states through stdin and encodes them into arrays. Additional information about the initial world
+    state will be generated and bundled by the call to 'create_task'. Each task refers to each listed world state read from
+    input, where each world will be processed seperately.
 
-    Universes are read line by line into an table array representing the universe aliased as 'state'. Each when a
-    emtpy character line is read, this represents the end of the universe which will make the current universe be
-    added to tasks.
-
-    Each universe is encoded from characters to numbers different classes of individuals are represented as:
-        - immune: -1
-        - vulnerable: 0
-        - sick 1
+    Input is read line by line, forming and encoding the world state in the buffer 'state_buf'. When the end of a world is
+    reached, it's task is created and added 'tasks' which is returned by the function once all world states are read from
+    the input.
 
     Returns
     -------
-    tasks : list<dict>
-        a list of universe and a flag for whether or not sick people exist inside the universe
+        tasks : list<dict>
+            containing world states with additional information. see 'create_task' for more...
 
     """
 
