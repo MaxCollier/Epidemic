@@ -15,7 +15,7 @@ There are two ways to play the game:
 
 ## Run
 
-Make sure to install _python3.6+_ and _numpy_ into your environment. You can the program `$ python3 epidemic.py { -a | -b } < input.txt`. Input is read through stdin and must be run in mode _a_ or _b_. Initial world states can be of any shape. Look to _examples.txt_ for examples.
+Make sure to install _python3.6+_ and _numpy_ into your environment. You can the program `$ python3 epidemic.py { -a | -b } < input.txt`. Input is read through stdin and must be run in mode _a_ or _b_. Initial world states can be of any shape. Look to _examples\_a.txt_ or _examples\_b.txt_ for examples.
 
 ### Explaining the algorithm for problem B
 

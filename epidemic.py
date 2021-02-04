@@ -1,15 +1,16 @@
 import numpy as np
+import argparse
 import math
 import sys
 
-SICK_KEY = 'S'
 SICK = 1
+SICK_KEY = 'S'
 
-IMMUNE_KEY = 'I'
 IMMUNE = -1
+IMMUNE_KEY = 'I'
 
-VULNERABLE_KEY = '.'
 VULNERABLE = 0
+VULNERABLE_KEY = '.'
 
 state_encoder = {
     SICK_KEY: SICK,
@@ -23,149 +24,97 @@ state_decoder = {
     VULNERABLE: VULNERABLE_KEY,
 }
 
+# todo, this can be improved with only checking states where there is alraedy ONE sick person
+# beside a vulnerable person...
 
-def make_hash(state):
+# test compute diagonals to see what it's used for then write some docs
+
+# read up about greedy algorithms and see if mine is just an alternative to something else
+# that exists.
+
+
+def make_hash(world):
     """
-    Hashes a given world state.
+    Hashes a given world world state.
     """
 
-    key = ""
-    (x_dim, y_dim) = state.shape
-    for i in range(x_dim):
-        for j in range(y_dim):
-            key += state_decoder[state[i, j]]
+    (x_dim, y_dim) = world.shape
+    key = "".join([state_decoder[world[i, j]] for i in range(x_dim) for j in range(y_dim)])
     
     return key
 
 
-def create_task(state, has_sick):
+class Task:
     """
-    Creates a 'task' based on the state of the state. Tasks are to be used by the 'main' function for running the selected
-    algorithm (mode a or b). 
+    Tasks merely provides an facade abstraction to finding extra information on the initial world state. These states are
+    additionally encoded from list of lists to numpy ndarrays. These arrays are much faster than python arrays as they 
+    leverage 'C' implementation and provide powerful mapping and multi-indexing capabilities.
 
-    Parameters
+    Attributes
     ----------
-    state : np.array
-        current world state
-
-    state : np.array
-        current world state
-
-    Returns
-    -------
-    object :    
-        state : np.array
-            initial world state
-        mask : np.array
-            identifies sick and immune existing individuals
-        has_sick : bool
-            whether any cell contains a sick person
+    world : np.ndarray
+        initial state of the world
+    init_sick : int
+        initial number of sick people in the world
+    world_mask : np.ndarray
+        mask to find actual area of 'world'. useful for worlds that provide in non-uniform shapes
 
     """
 
-    row_lens = np.array([ len(row) for row in state ])
+    def __init__(self, init_state):
+        """
+        Initializes the fields of task. There are two methods for initializing the world state encoding, which are numpy
+        array functions and indice loops. The first method can be used when the initial world shape is uniform (i.e when
+        all rows are of equal length) and the second method can be used when for non-uniform worlds. 
 
-    # unifromly shaped world state, no map manipulation required
-    if np.all(row_lens == row_lens[0]):
-        return {
-            'state': np.array(state),
-            'has_sick': has_sick,
-            'world_mask': np.ones(np.array(state).shape, dtype=np.bool)
-        }
-
-    # TODO check if this works correctly.. No if statement so it might blank out 
-    world_mask = []
-    new_state = []
-    len_target = np.max(row_lens)
-    for i, (row, row_len) in enumerate(zip(state, row_lens)):
-        row_mask = [ True for _ in range(row_len) ]
-        for j in range(row_len, len_target):
-            row.append(IMMUNE)
-            row_mask.append(False)
-        new_state.append(row)
-        world_mask.append(row_mask)
-
-    return {
-        'has_sick': has_sick,
-        'state': np.array(new_state),
-        'world_mask': np.array(world_mask, dtype=np.bool),
-    }
+        """
+        row_lens = np.array([ len(row) for row in init_state ])
+        uniform_dims = np.all(row_lens == row_lens[0])
+        max_dim = np.max(row_lens)
     
+        if uniform_dims:
+            self.world = np.array(init_state)
+            self.init_sick = np.sum(self.world == SICK)
+            self.world_mask = np.ones(self.world.shape, dtype=np.bool)
 
-def read_input():
+        else:
+            shape = (row_lens.size, max_dim)
+            padded_world_state = np.zeros(shape)
+            rm_padded_world_mask = np.zeros(shape, dtype=np.bool)
+            padded_world_state[:] = IMMUNE
+
+            for i, row in enumerate(init_state):
+                for j, person in enumerate(row):
+                    padded_world_state[i, j] = person
+                    rm_padded_world_mask[i, j] = True
+
+            self.world = padded_world_state
+            self.world_mask = rm_padded_world_mask
+            self.init_sick = np.sum(self.world == SICK)
+
+        self.neighbour_indices = calculate_neighbours(self.world.shape)
+
+
+def calculate_neighbours(shape):
     """
-    Reads initial world states through stdin and encodes them into arrays. Additional information about the initial world
-    state will be generated and bundled by the call to 'create_task'. Each task refers to each listed world state read from
-    input, where each world will be processed seperately.
+    For each grid position, the indices of each neighbouring grid position is found and represented by an array 'indices'.
+    The retrieval of an neighbours grid positions can be found using:
 
-    Input is read line by line, forming and encoding the world state in the buffer 'state_buf'. When the end of a world is
-    reached, it's task is created and added 'tasks' which is returned by the function once all world states are read from
-    the input.
+    >>> indices[i][j]
 
-    Returns
-    -------
-        tasks : list<dict>
-            containing world states with additional information. see 'create_task' for more...
-
-    """
-
-    lines = [line.strip() for line in sys.stdin.readlines()]
-
-    tasks = []
-    universe = []
-    has_sick = False
-    while lines or universe:
-        
-        # handles case where final new line doesn't exist from file
-        if lines:
-            line = lines.pop(0)
-        elif universe:
-            line = ''
-
-        # empty line represents end of universe  
-        if not line:
-
-            # no task exists if no universe exists
-            if not universe:
-                continue
-            
-            # appends task
-            tasks.append(create_task(universe, has_sick))
-
-            # accounting
-            universe = []
-            has_sick = False
-            continue
-
-        # checks if a sick case exists in universe
-        if SICK_KEY in line:
-            has_sick = True
-
-        # adds row to universe
-        row = [state_encoder[token] for token in line]
-        universe.append(row)
-
-    return tasks
-
-
-def calculate_grid_neighbours(shape):
-    """
-    Finds an array for the list of neighbours positions for each position in the universe. This is done by looping
-    through each position, finding the indices of each neighbouring position and adding them if the neighbouring 
-    positions are legitimate.
+    where i is the row position and j in the column position.
 
     Parameters
     ----------
     shape : tuple
-        dimensions of universe
+        dimensions of world
 
     Returns
     -------
-    indices : list<list<np.array>>
-        cache list of neighbours positions for each position in universe 
+    indices : list<list<np.ndarray>>
+        index retrieval for neighbouring grid positions
 
     """
-
     (x_dim, y_dim) = shape
     
     masks = np.zeros((*shape, *shape), dtype=np.bool)
@@ -194,7 +143,7 @@ def calculate_grid_neighbours(shape):
     return indices
 
 
-def get_neighbour_indicies(shape):
+def calculate_neighbour_masks(shape):
     """
     Finds an array for the list of neighbours positions for each position in the universe. This is done by looping
     through each position, finding the indices of each neighbouring position and adding them if the neighbouring 
@@ -293,28 +242,30 @@ def get_sick_indices(shape):
     return indices
 
 
-def find_final_state(state):
+def spread_virus(state, indices):
     """
-    Finds the final state of a universe after each infected case has been infected. This is done by looping through each
-    position and updating vulnerable cases to sick when possible until there are no more cases to become sick. The
-    condition for making a vulnerable person sick is that at least two neighbours need to be sick as well.
+    Performs rule to spread the virus. If someone vulnerable is standing beside two sick people, then that person becomes
+    sick themself. This rule is repeated until the disease is not able to spread any futher. This world state is then 
+    returned. 
 
     Parameters
     ----------
-    state : np.array
-        initial state of universe
+    state : np.ndarray
+        initial state of world
+
+    indices : list<list<np.ndarray>>
+        cached indice retrieval map for neighbouring grid positions. see 'calculate_neighbours' for more details
 
     Returns
     -------
-    state : np.array
-        final state of universe
+    state : np.ndarray
+        final state of world once virus has spread
 
     """
 
     has_updated = True
     next_state = state.copy()
     (dim_x, dim_y) = state.shape
-    indices = calculate_grid_neighbours(state.shape)
 
     while has_updated:
         has_updated = False
@@ -326,8 +277,8 @@ def find_final_state(state):
                 if person != VULNERABLE:
                     continue
 
-                mask = indices[i][j]
-                neighbours = state[mask]
+                find_nieghbours = indices[i][j]
+                neighbours = state[find_nieghbours]
                 
                 if np.sum(neighbours == SICK) >= 2:
                     next_state[i][j] = SICK
@@ -338,38 +289,31 @@ def find_final_state(state):
     return state
 
 
-def short_curcuit_compute(state):
+def solve_with_identity(state, neighbour_indices):
     """
     Finds optimal solution for 'find_minimum_sick' when there are no sick cases.
     """
     
-    # cached variables
     shape = state.shape
     (x_dim, y_dim) = shape
     (min_dim, max_dim) = np.sort(shape)
     
-    mask = np.zeros(shape, dtype=np.bool)
-    mask[:min_dim, :min_dim] = np.identity(min_dim, dtype=np.bool)
-    
-    for i in range(min_dim + 1, max_dim, 2):
-        if x_dim == min_dim:
-            mask[0, i] = True 
-        else:
-            mask[i, 0] = True 
+    world = np.zeros(shape)
+    identity = np.identity(min_dim)
 
-    # handles exception case where final row/column won't get filled in
-    x_sum = np.sum(mask, axis=0)
-    y_sum = np.sum(mask, axis=1)
-    if x_sum[-1] == 0 or y_sum[-1] == 0:
-        mask[-1, -1] = True
+    if x_dim == y_dim:
+        world = identity
+    else:
+        for i in range(0, min_dim + max_dim, min_dim + 1):
+            if x_dim > y_dim:
+                world[i:i+min_dim, :min_dim] = identity[:max_dim-i, :]
+            else:
+                world[:min_dim, i:i+min_dim] = identity[:, :max_dim-i]
 
-    # asserts whole table will get sick
-    table = np.zeros(shape)
-    table[mask] = SICK
-    result = find_final_state(table)
-    assert np.all(result == SICK)
+        if not np.any(world[:, -1]) or not np.any(world[-1, :]):
+            world[-1, -1] = SICK
 
-    return table
+    return world
 
 
 def compute_starting_diagonals(state):
@@ -386,16 +330,11 @@ def compute_starting_diagonals(state):
     (min_dim, max_dim) = np.sort(shape)
 
     # logic below finds all diagonals
-    diagonals = []
-    diag_info = []
-    axis_x = x_dim >= y_dim
     dim_diff = max_dim - min_dim
     identities = { dim_num: np.identity(min_dim - dim_num, dtype=np.bool) for dim_num in range(min_dim) }
     _identities = { dim_num: flip(np.identity(min_dim - dim_num, dtype=np.bool)) for dim_num in range(min_dim) }
 
-    # state = np.arange(35).reshape(7,5)
     # make all states and then just apply mask for where there is less that 1 case
-    state_index = 0
     dim_diff = max_dim - min_dim
     minimal_states = np.zeros((0, *shape))
     x_diff = dim_diff if x_dim > y_dim else 0
@@ -442,61 +381,52 @@ def compute_starting_diagonals(state):
     return minimal_states
      
 
-def find_minimum_sick(state):
+def find_minimum_sick(state, nieghbour_indices):
     """
-    Finds the state where the minimum amount of sick people exist to fill the whole universe. This is done by searching 
-    through creating a search tree and representing the state in numpy arrays. Branching paths are broken up by divisors
-    which create the path for how leave nodes are grouped.
+    Solves for solution to mode b using an evolutionary performance alogrithm to find the minimum number of additional sick
+    people required to infect the entire population.
 
     Parameters
     ----------
     state : np.array
-        initial state of universe, has no sick people
+        initial world state
+
+    nieghbour_indices: list<list<np.ndarray>>
+        index retrieval for neighbouring grid positions. see 'calculate_neighbours' for explaination
 
     Returns
     -------
     state : np.array
-        universe with the minimum amount of sick people to infect the whole population
+        a world state with the least number of sick people to infect the whole population, including people who were
+        initially sick
 
     """
-
-    assert np.sum(state == SICK) == 0, "No sick cases can exist in universe where we are trying to find the minimum sick cases"
     
-    if np.sum(state == VULNERABLE) == 0:
+    if np.sum(state == SICK) != 0: 
+        state = spread_virus(state, nieghbour_indices)
+
+    if np.sum(state == VULNERABLE) == 0: 
         return state
-    
-    # cached variables
+
+    if np.sum(state == VULNERABLE) == state.size:
+        return solve_with_identity(state, nieghbour_indices)
+
     shape = state.shape
-    (x_dim, y_dim) = shape
-    (min_dim, max_dim) = np.sort(shape)
+    final_state = state.copy()
+    final_state[state == VULNERABLE] = SICK
     indices = get_sick_indices(shape)
-    neighbours = get_neighbour_indicies(shape)
-
-    # places immune cases back to their positions
-    immune_mask = state == IMMUNE
-    num_immune = np.sum(immune_mask)
-
-    # HANDLES - no immune cases on grid (short curcuit compute)
-    if np.sum(immune_mask) == 0:
-        return short_curcuit_compute(state)
+    neighbours = calculate_neighbour_masks(shape)
 
     # create initial search states
-    minimal_states = np.zeros((np.sum(~immune_mask), *shape))
-    minimal_states[:, immune_mask] = IMMUNE
-    for idx, (i, j) in enumerate(zip(*np.where(~immune_mask))):
+    minimal_states = np.zeros((np.sum(state == VULNERABLE), *shape))
+    minimal_states[:] = state
+    for idx, (i, j) in enumerate(zip(*np.where(state == VULNERABLE))):
         minimal_states[idx, i, j] = SICK
 
-    # finds final state array for comsparisons
-    final_state = state.copy()
-    final_state[~immune_mask] = SICK
-    
-    # removes duplicate board states, can occur when there are many immune cases
-    minimal_states = np.unique(minimal_states, axis=0)
-    world_states = minimal_states.copy()
-
     # plays world out before hand infecting as many people as possible
+    world_states = minimal_states.copy()
     for i in range(world_states.shape[0]):
-        world_states[i] = find_final_state(minimal_states[i])
+        world_states[i] = spread_virus(minimal_states[i], nieghbour_indices)
 
     # creates hash value keys for each state, useful for finding duplicates
     world_hashes = np.array([make_hash(world_state) for world_state in world_states])
@@ -504,7 +434,7 @@ def find_minimum_sick(state):
     # loop is used to find best state, THIS IS WHERE THE MAGIC HAPPENS
     generation = 0
     best_minimal = np.ones(shape)
-    best_minimal[immune_mask] = -1.
+    best_minimal[state == IMMUNE] = -1.
     while world_states.shape[0] > 0:
         
         # queues are actaully pre-allocated arrays of memory that provide a means of quickly computing, selecting, searching
@@ -523,7 +453,7 @@ def find_minimum_sick(state):
         # The different arrays are:
         #
         #   - minial: the positions of each sick person that aim to infect the whole board
-        #   - world: the worlds states after expanding the infection with 'find_final_state'
+        #   - world: the worlds states after expanding the infection with 'spread_virus'
         #   - hash: keys that reprsent the state of each board.
         #
         _minimal_queue = np.zeros((*world_states.shape, *shape))
@@ -552,7 +482,7 @@ def find_minimum_sick(state):
                 # finds the new state of the board
                 _util_mask[p, i, j] = True
                 _minimal_queue[p, i, j] = _minimal
-                _world_queue[p, i, j] = _state = find_final_state(_state)
+                _world_queue[p, i, j] = _state = spread_virus(_state, nieghbour_indices)
                 _hash_queue[p, i, j] = make_hash(_state)
         
         #
@@ -585,7 +515,7 @@ def find_minimum_sick(state):
 
                     _new_world_state[i, j] = SICK
                     _new_minimal_state[i, j] = SICK
-                    _new_world_state = find_final_state(_new_world_state)
+                    _new_world_state = spread_virus(_new_world_state, nieghbour_indices)
                     
                     new_hashes = np.append(new_hashes, make_hash(_new_world_state))
                     new_world_states = np.concatenate((new_world_states, _new_world_state.reshape((1, *shape))))
@@ -656,7 +586,6 @@ def find_minimum_sick(state):
             ratio = _count / _minimal
             _ratio = ratio[mask]
             ratios = np.unique(_ratio)
-            mask_len = np.sum(mask)
 
             # finds a ratio cut off which allows for at most 1000 search cases to persist
             remove_bins = np.array([ np.sum(_r < _ratio) for _r in ratios ])
@@ -677,36 +606,118 @@ def find_minimum_sick(state):
         # print(minimal_states.shape)
         
     return best_minimal
+    
 
-
-def format_and_print(universe, mode, world_mask):
+def read_input():
     """
-    Encodes map back to original encoding from the nomial encoding given during 'read_input'.
+    Reads initial world states through stdin and encodes them into arrays. Additional information about the initial world
+    state will be generated and bundled by the call to 'create_task'. Each task refers to each listed world state read from
+    input, where each world will be processed seperately.
+
+    Input is read line by line, forming and encoding the world state in the buffer 'state_buf'. When the end of a world is
+    reached, it's task is created and added 'tasks' which is returned by the function once all world states are read from
+    the input.
+
+    Returns
+    -------
+        tasks : list<dict>
+            containing world states with additional information. see 'create_task' for more...
+
+    """
+
+    lines = [line.strip() for line in sys.stdin.readlines()]
+
+    tasks = []
+    cur_world = []
+    while lines or cur_world:
+        
+        line = lines.pop(0) if lines else ''
+
+        if line:
+            cur_world.append([state_encoder[token] for token in line])
+        else:
+            if len(cur_world) == 0:
+                continue
+
+            task = Task(cur_world)
+            tasks.append(task)
+            cur_world = []
+
+    return tasks
+
+
+def format_and_print(world, task, args):
+    """
+    Encodes map back to original encoding from the nomial encoding given during 'read_input'. Provides extra details if 
+    the program was run in mode b.
 
     Parameters
     ----------
-    universe : np.array
-        final state of the universe
-
-    has_sick : bool
-        flag for if true, print the amount of sick cases that exist in universe
+    world : np.ndarray
+        final solution of world state for either mode a or b
+    task : object
+        holds world_mask to find mask of original world state. see 'Task' class for more details
+    args : argparse.NameSpace
+        holds state for whether the program was run in mode b
 
     """
 
-    if mode == 'b':
-        num_sick = np.sum(universe == SICK)
-        print(num_sick)
+    world_mask = task.world_mask
+    final_sick = np.sum(world == SICK)
+    addtional_sick = final_sick - task.init_sick
+
+    if args.mode_b:
+        if task.init_sick == 0:
+            print(f"Minimum of {final_sick} sick people required to infect the entire population.")
+        else:
+            print(f"An additional {addtional_sick} sick people required from to infect the entire population, {final_sick} total.")
 
     str_universe = ""
-    for i, row in enumerate(universe):
+    for i, row in enumerate(world):
         for j, cell in enumerate(row):
-            if world_mask[i, j]:
-                str_universe += state_decoder[cell]
-            else:
-                str_universe += " "
+                str_universe += state_decoder[cell] if world_mask[i, j] else " "
         str_universe += '\n'
     print(str_universe)
 
+
+def handle_args():
+    """
+    Command line arguments handler.
+
+    Returns
+    -------
+    args : dict    
+        key value pairs for command line arguments
+
+    """
+
+    parser = argparse.ArgumentParser(
+        description="Algorithms to solve the game Epidemic. Mode B provide a semi-evolutionary algorithm to solve problem"\
+                   " in polynomial time."
+    )
+    modes = parser.add_mutually_exclusive_group(
+        required=True
+    )
+    modes.add_argument(
+        '-a', action='store_true', dest="mode_a",
+        help="Given an inital world, find the final world state once the virus has spread."
+    )
+    modes.add_argument(       
+        '-b', action='store_true', dest="mode_b",
+        help="Given a world with no sick people, find an initial world state with the smallest number of sick people that"\
+            "can infect the entire non-immune population"
+    )
+    parser.add_argument(
+        '--pool-maximum', '-n', type=int, default=500,
+        help="Hyperparameter for algorithm defining the maximum number of best performing state instances that can exist "\
+            "between generations. Only useful when '-b' is used."
+    )
+    parser.add_argument(
+        '--verbose', '-v', action='store_true',
+        help="Show information between generations when evolutionary algorithm is running"
+    )
+
+    return parser.parse_args()
 
 
 def main():
@@ -714,36 +725,18 @@ def main():
     Reads input for universes and solves them for either completing the state of the universe by observing a sickness
     spread across the population or find the minimum number of cases for a universe that will make the entire
     population sick.
-    """
 
-    assert len(sys.argv) == 2, "missing mode flag (-a or -b)"
-    
-    # read command line flags
-    task_handler = None
-    if sys.argv[1] == '-a':
-        mode = 'a'
-        task_handler = find_final_state
-    elif sys.argv[1] == '-b':
-        mode = 'b'
-        task_handler = find_minimum_sick
+    """
+    args = handle_args()
+    if args.mode_a:
+        task_handler = spread_virus
     else:
-        raise ValueError("flag needs to be either -a or -b")
+        task_handler = find_minimum_sick
 
     tasks = read_input()
-
     for task in tasks:
-
-        universe = task['state']
-        has_sick = task['has_sick']
-        world_mask = task['world_mask']
-
-        # task b cannot have any sick people according to etude spec
-        if mode == 'b' and has_sick:
-            raise ValueError("Task b cannot contain sick people")
-
-        result = task_handler(universe)
-
-        format_and_print(result, mode, world_mask)
+        result = task_handler(task.world, task.neighbour_indices)
+        format_and_print(result, task, args)
 
 
 if __name__ == "__main__":
