@@ -27,7 +27,7 @@ state_decoder = {
 # todo, this can be improved with only checking states where there is alraedy ONE sick person
 # beside a vulnerable person...
 
-# test compute diagonals to see what it's used for then write some docs
+# does the initial search states need to exist if we have a variable to count how many sick their are?
 
 # read up about greedy algorithms and see if mine is just an alternative to something else
 # that exists.
@@ -97,12 +97,26 @@ class Task:
 
 def calculate_neighbours(shape):
     """
-    For each grid position, the indices of each neighbouring grid position is found and represented by an array 'indices'.
-    The retrieval of an neighbours grid positions can be found using:
+    Returns an array which provides masks to find neighbouring cells for each grid position. The retrieval of an neighbours
+    grid positions can be found using:
 
-    >>> indices[i][j]
+    >>> neighbour_masks[i, j]
 
-    where i is the row position and j in the column position.
+    where i is the row position and j in the column position of the cell we want to find the neighbours of. This will return
+    a 2D mask which then be applied to retrieve the values nieghbouring cells with:
+
+    >>> world_state[neighbour_masks[i, j]]
+
+    Investigating the structure of 'neighbour_masks', we can notice four dimensions to the array. The first should be 
+    considered the query parameters. Say if "I want to find the neighbours on cell (2, 3) in the world", then applying:
+    
+    >>> world_state[neighbour_masks[2, 3]]
+
+    Will retrieve the neighbouring cells. These next two dimensions then represent the dimensions of the world_state which
+    will hold boolean values representing whether a cell is a neighbour of the queried (i, j). 
+    
+    To learn more on the topic of masks see:
+    https://numpy.org/doc/1.20/user/basics.indexing.html#boolean-or-mask-index-arrays
 
     Parameters
     ----------
@@ -111,138 +125,80 @@ def calculate_neighbours(shape):
 
     Returns
     -------
-    indices : list<list<np.ndarray>>
-        index retrieval for neighbouring grid positions
+    neighbour_masks : np.ndarray
+        masks for finding neighbouring cells for each grid position
 
     """
+
     (x_dim, y_dim) = shape
-    
-    masks = np.zeros((*shape, *shape), dtype=np.bool)
+    neighbour_masks = np.zeros((*shape, *shape), dtype=np.bool)
 
-    for i in range(x_dim):
-        for j in range(y_dim): 
+    # loops over all positions of grid
+    for (i, j) in zip(*np.where(np.ones(shape, dtype=np.bool))):
 
-            indices_mask = masks[i, j]
+            # selects the neighbour mask to work with by referencing a section the underlying array
+            neighbour_mask = neighbour_masks[i, j]
 
+            # calculates NESW neighbour positions 
             _n = (i-1, j)
             _e = (i, j+1)
             _s = (i+1, j)
             _w = (i, j-1)
 
+            # checks if nieghbour exists before updating
             if i != 0:
-                indices_mask[_n] = True
+                neighbour_mask[_n] = True
             if j != y_dim-1:
-                indices_mask[_e] = True
+                neighbour_mask[_e] = True
             if i != x_dim-1:
-                indices_mask[_s] = True
+                neighbour_mask[_s] = True
             if j != 0:
-                indices_mask[_w] = True
-            
-    indices = [[np.where(masks[i, j]) for j in range(y_dim)] for i in range(x_dim)]
+                neighbour_mask[_w] = True
 
-    return indices
+    return neighbour_masks
 
 
-def calculate_neighbour_masks(shape):
+def calculate_neighbours_neighbours(shape, neighbour_masks):
     """
-    Finds an array for the list of neighbours positions for each position in the universe. This is done by looping
-    through each position, finding the indices of each neighbouring position and adding them if the neighbouring 
-    positions are legitimate.
+    Returns an array which provides masks to find the neighbours of neighbouring cells of each grid position. This arrray
+    follows the same principle design as 'calculate_neighbours' result. The retrieval of a neighbours neighbouring cells
+    grid positions can be found using:
+
+    >>> nn_indices[i, j]
+
+    where i is the row position and j in the column position of the cell we want to find our neighbours neighbours from.
+    Please see 'calculate_neighbours' documentation for a better explaination. 
 
     Parameters
     ----------
     shape : tuple
-        dimensions of universe
+        dimensions of world
+
+    neighbour_masks : np.ndarray
+        result of 'neighbour_masks' in respect to the current world 
 
     Returns
     -------
-    indices : list<list<np.array>>
-        cache list of neighbours positions for each position in universe 
+    neighbour_masks : np.ndarray
+        masks for finding neighbours nieghbouring cells for each grid position
 
     """
 
-    (x_dim, y_dim) = shape
-    
-    masks = np.zeros((*shape, *shape), dtype=np.bool)
+    nn_indices = np.zeros((*shape, *shape), dtype=np.bool)
 
-    for i in range(x_dim):
-        for j in range(y_dim): 
+    # loops over all positions of grid
+    for (i, j) in zip(*np.where(np.ones(shape, dtype=np.bool))):
 
-            indices_mask = masks[i, j]
+        # finds neighbours of neighbours masks and colapses them with 'or' logic
+        nn_indices[i, j] = np.any(neighbour_masks[neighbour_masks[i, j]], axis=0)
 
-            _n = (i-1, j)
-            _e = (i, j+1)
-            _s = (i+1, j)
-            _w = (i, j-1)
+        # current position neighbours each neighbour, this is undone as it is typically irrelevant when using mask
+        nn_indices[i, j, i, j] = False
 
-            if i != 0:
-                indices_mask[_n] = True
-            if j != y_dim-1:
-                indices_mask[_e] = True
-            if i != x_dim-1:
-                indices_mask[_s] = True
-            if j != 0:
-                indices_mask[_w] = True
-
-    return masks
+    return nn_indices
 
 
-def get_sick_indices(shape):
-    """
-    Finds an array for the list of neighbours positions for each position in the universe. This is done by looping
-    through each position, finding the indices of each neighbouring position and adding them if the neighbouring 
-    positions are legitimate.
-
-    Parameters
-    ----------
-    shape : tuple
-        dimensions of universe
-
-    Returns
-    -------
-    indices : list<list<np.array>>
-        cache list of neighbours positions for each position in universe 
-
-    """
-    (x_dim, y_dim) = shape
-    
-    indices = np.zeros((*shape, *shape), dtype=np.bool)
-
-    for i in range(x_dim):
-        for j in range(y_dim): 
-
-            indices_mask = indices[i, j]
-
-            _nn = (i-2, j)
-            _ee = (i, j+2)
-            _ss = (i+2, j)
-            _ww = (i, j-2)
-            _nw = (i-1, j-1)
-            _ne = (i-1, j+1)
-            _se = (i+1, j+1)
-            _sw = (i+1, j-1)
-
-            if i >= 2:
-                indices_mask[_nn] = True
-            if j < y_dim-2:
-                indices_mask[_ee] = True
-            if i < x_dim-2:
-                indices_mask[_ss] = True
-            if j >= 2:
-                indices_mask[_ww] = True
-            if i > 0 and j > 0:
-                indices_mask[_nw] = True
-            if i > 0 and j < y_dim -1:
-                indices_mask[_ne] = True
-            if i < x_dim -1 and j < y_dim -1:
-                indices_mask[_se] = True
-            if i < x_dim -1 and j > 0:
-                indices_mask[_sw] = True
-
-    return indices
-
-
-def spread_virus(state, indices):
+def spread_virus(state, neighbours):
     """
     Performs rule to spread the virus. If someone vulnerable is standing beside two sick people, then that person becomes
     sick themself. This rule is repeated until the disease is not able to spread any futher. This world state is then 
@@ -265,35 +221,46 @@ def spread_virus(state, indices):
 
     has_updated = True
     next_state = state.copy()
-    (dim_x, dim_y) = state.shape
+    grid_positions = np.where(np.ones(state.shape, dtype=np.bool))
 
+    # spreads virus while it is still able to spread
     while has_updated:
         has_updated = False
 
-        for i in range(dim_x):
-            for j in range(dim_y):
+        # loops across every grid position
+        for (i, j) in zip(*grid_positions):
 
-                person = state[i, j]
-                if person != VULNERABLE:
-                    continue
+            # if person is vulnerable and has two sick neighbours
+            if state[i, j] == VULNERABLE and np.sum(state[neighbours[i, j]] == SICK) >= 2:
+                has_updated = True
+                next_state[i, j] = SICK
 
-                find_nieghbours = indices[i][j]
-                neighbours = state[find_nieghbours]
-                
-                if np.sum(neighbours == SICK) >= 2:
-                    next_state[i][j] = SICK
-                    has_updated = True
-
+        # updates buffer
         state = next_state
 
     return state
 
 
-def solve_with_identity(state, neighbour_indices):
+def solve_with_identity(state):
     """
-    Finds optimal solution for 'find_minimum_sick' when there are no sick cases.
+    Given a world where there is only vunlerable people, a solution can be found by mapping an identity matrix along the 
+    longest dimension. Between each copy of the identity, a gap can be left which will be filled by either side (there 
+    will be a sick person on either side once the virus spreads). If the gap placed on the last row/column of the world,
+    then the person in the bottom corner will be made sick (otherwise the last row/column would only have sick people
+    on one side). 
+
+    Parameters
+    ----------
+    state : np.array
+        initial world state
+
+    Returns
+    -------
+    state : np.array
+        a world state with the least number of sick people to infect the whole population
+
     """
-    
+
     shape = state.shape
     (x_dim, y_dim) = shape
     (min_dim, max_dim) = np.sort(shape)
@@ -301,98 +268,44 @@ def solve_with_identity(state, neighbour_indices):
     world = np.zeros(shape)
     identity = np.identity(min_dim)
 
+    # identity solution can be applied straight away
     if x_dim == y_dim:
         world = identity
     else:
+
+        # applies the identity martix through the world with a gap between each identity
         for i in range(0, min_dim + max_dim, min_dim + 1):
+
+            # figures out it it's applied along the row and column
             if x_dim > y_dim:
                 world[i:i+min_dim, :min_dim] = identity[:max_dim-i, :]
             else:
                 world[:min_dim, i:i+min_dim] = identity[:, :max_dim-i]
 
+        # in the case the final row/column has no sick people, insert a sick person into the bottom left corner to solve 
+        # problem
         if not np.any(world[:, -1]) or not np.any(world[-1, :]):
             world[-1, -1] = SICK
 
     return world
-
-
-def compute_starting_diagonals(state):
-    """
-    Initial means of creating a search array
-    """
-
-    # helper for flipping identity across veritical axis
-    flip = lambda _ident: np.flip(_ident, axis=1)
-    
-    # cached variables
-    shape = state.shape
-    (x_dim, y_dim) = shape
-    (min_dim, max_dim) = np.sort(shape)
-
-    # logic below finds all diagonals
-    dim_diff = max_dim - min_dim
-    identities = { dim_num: np.identity(min_dim - dim_num, dtype=np.bool) for dim_num in range(min_dim) }
-    _identities = { dim_num: flip(np.identity(min_dim - dim_num, dtype=np.bool)) for dim_num in range(min_dim) }
-
-    # make all states and then just apply mask for where there is less that 1 case
-    dim_diff = max_dim - min_dim
-    minimal_states = np.zeros((0, *shape))
-    x_diff = dim_diff if x_dim > y_dim else 0
-    y_diff = dim_diff if x_dim < y_dim else 0
-
-    # finds dialogals that are full length (min_dim)
-    for idx in range(max_dim - min_dim + 1):
-        x_idx = idx if x_dim > y_dim else 0
-        y_idx = idx if x_dim < y_dim else 0
-        x_offset = idx + min_dim if x_dim > y_dim else min_dim
-        y_offset = idx + min_dim if x_dim < y_dim else min_dim
-
-        # creates array copies
-        left = state.copy()
-        right = state.copy()
-
-        # fills in where dialogals should go
-        left[x_idx:x_offset, y_idx:y_offset][identities[0]] = SICK
-        right[x_idx:x_offset, y_idx:y_offset][_identities[0]] = SICK
-
-        # merges states into a single matrix
-        array_stack = np.stack((left, right))
-        minimal_states = np.concatenate((minimal_states, array_stack))
-
-    # finds diagonals that aren't full length (min_dim)
-    for idx in range(1, min_dim):
-
-        # creates array copies
-        top_left = state.copy()
-        top_right = state.copy()
-        bottom_left = state.copy()
-        bottom_right = state.copy()
-
-        # fills in where dialogals should go
-        top_left[:-idx - x_diff, :-idx - y_diff][_identities[idx]] = SICK
-        top_right[:-idx - x_diff, idx + y_diff:][identities[idx]] = SICK
-        bottom_left[idx + x_diff:, :-idx - y_diff][identities[idx]] = SICK
-        bottom_right[idx + x_diff:, idx + y_diff:][_identities[idx]] = SICK
-
-        # merges states into a single matrix
-        array_stack = np.stack((top_left, top_right, bottom_left, bottom_right))
-        minimal_states = np.concatenate((minimal_states, array_stack))
-
-    return minimal_states
      
 
-def find_minimum_sick(state, nieghbour_indices):
+def find_minimum_sick(init_state, neighbours):
     """
     Solves for solution to mode b using an evolutionary performance alogrithm to find the minimum number of additional sick
     people required to infect the entire population.
 
+    spr_branches represents all the nodes of the state tree local at their local decisions with forsight of a single move.
+    The exist and move all at the same depth. Hence once one node returns a completed solution, then we will know that it
+    is the best one the algorithm has made. 
+
     Parameters
     ----------
-    state : np.array
+    init_state : np.array
         initial world state
 
-    nieghbour_indices: list<list<np.ndarray>>
-        index retrieval for neighbouring grid positions. see 'calculate_neighbours' for explaination
+    neighbours: np.ndarray
+        result of 'calculate_neighbours' function in respect of current world 
 
     Returns
     -------
@@ -401,41 +314,115 @@ def find_minimum_sick(state, nieghbour_indices):
         initially sick
 
     """
-    
-    if np.sum(state == SICK) != 0: 
-        state = spread_virus(state, nieghbour_indices)
 
-    if np.sum(state == VULNERABLE) == 0: 
-        return state
+    # spreads virus from initial state if possible    
+    if np.sum(init_state == SICK) == 0: 
+        world_state = init_state
+    else:
+        world_state = spread_virus(init_state, neighbours)
 
-    if np.sum(state == VULNERABLE) == state.size:
-        return solve_with_identity(state, nieghbour_indices)
+    # already at a final state so return init_state 
+    if np.sum(world_state == VULNERABLE) == 0: 
+        return init_state
 
-    shape = state.shape
-    final_state = state.copy()
-    final_state[state == VULNERABLE] = SICK
-    indices = get_sick_indices(shape)
-    neighbours = calculate_neighbour_masks(shape)
+    # no sick or immune people in world, quick alternative solution
+    if np.sum(init_state == VULNERABLE) == init_state.size:
+        return solve_with_identity(init_state)
 
-    # create initial search states
-    minimal_states = np.zeros((np.sum(state == VULNERABLE), *shape))
-    minimal_states[:] = state
-    for idx, (i, j) in enumerate(zip(*np.where(state == VULNERABLE))):
-        minimal_states[idx, i, j] = SICK
+    # cached variables
+    dims = init_state.shape
+    hash_type = f"<U{world_state.size}"
+    final_state = init_state.copy()
+    final_state[init_state == VULNERABLE] = SICK
+    neighbours_neighbours = calculate_neighbours_neighbours(dims, neighbours)
 
-    # plays world out before hand infecting as many people as possible
-    world_states = minimal_states.copy()
-    for i in range(world_states.shape[0]):
-        world_states[i] = spread_virus(minimal_states[i], nieghbour_indices)
+    # todo could the hashes be removed? It seems likely
 
-    # creates hash value keys for each state, useful for finding duplicates
-    world_hashes = np.array([make_hash(world_state) for world_state in world_states])
+    # The initial branches need to be created in order for algorithm to work. Having at least one option to infect is 
+    # guaranteed as virus has already been spread where 'world_state' is not a final state.
+    vunerable_mask = world_state == VULNERABLE
+    branching_states_minimal = np.zeros((np.sum(vunerable_mask), *dims)) # states before virus spreads
+    branching_states = np.zeros((np.sum(vunerable_mask), *dims)) # states after virus spreads
+    branch_hashes = np.zeros(np.sum(vunerable_mask), dtype=hash_type)
 
-    # loop is used to find best state, THIS IS WHERE THE MAGIC HAPPENS
+    # initializes all branches with original states
+    branching_states_minimal[:] = init_state
+    branching_states[:] = world_state
+
+    # updates the decision tree by placing a sick person for each vulnerable position on each branch. This is to represent
+    # the branching decisions that can be made
+    for branch_idx, (i, j) in enumerate(zip(*np.where(vunerable_mask))):
+
+        # places sick person in one position for each branch
+        branching_states_minimal[branch_idx, i, j] = SICK
+
+        # spread state after placing sick person for each branch
+        branch_state = branching_states[branch_idx]
+        branch_state[i, j] = SICK
+        branching_states[branch_idx] = spread_virus(branch_state, neighbours)
+
+        # creates hashes for each branching decsision
+        branch_hashes[branch_idx] = make_hash(branching_states[branch_idx])
+
+
     generation = 0
-    best_minimal = np.ones(shape)
-    best_minimal[state == IMMUNE] = -1.
-    while world_states.shape[0] > 0:
+    best_minimal = np.ones(dims)
+    best_minimal[init_state == IMMUNE] = IMMUNE
+
+    # THIS IS WHERE THE MAGIC HAPPENS
+    while True:
+
+        # solution returned once found (no secondary criteria)
+        solution_found = np.all(branching_states == final_state, axis=(1, 2))
+        if np.any(solution_found):
+            return branching_states_minimal[solution_found][0]
+
+        # pre-allocation of the next branching states from the current states
+        prealloc_shape = (*branching_states.shape, *dims)
+        next_branches = np.zeros(prealloc_shape)
+        next_branches_minimal = np.zeros(prealloc_shape)
+        next_braches_mask = np.zeros(branching_states.shape, dtype=np.bool)
+        next_brach_hashes = np.empty(branching_states.shape, dtype=hash_type)
+ 
+        # mask to identify which items in the queue were updated
+        # _util_mask = np.zeros(world_states.shape, dtype=np.bool)
+
+        # finds how placing a sick person in each part of the grid infects the rest of the grid. Process cannot be computed
+        # via a parrellel as non pure python context cannot be supplied to processes.
+        for (p, i, j) in zip(*np.where(branching_states == VULNERABLE)):
+
+            # checks if adding a sick person at i, j will infect other parts of the board
+            if np.any(world_states[p][neighbours_neighbours[i, j]] == SICK):
+
+                # copies previous state
+                _prev = world_states[p]
+                _state = world_states[p].copy()
+                _minimal = minimal_states[p].copy()
+
+                # adds sick people 
+                _state[i, j] = SICK
+                _minimal[i, j] = SICK
+
+                # finds the new state of the board
+                _util_mask[p, i, j] = True
+                _minimal_queue[p, i, j] = _minimal
+                _world_queue[p, i, j] = _state = spread_virus(_state, neighbours)
+                _hash_queue[p, i, j] = make_hash(_state)
+
+        # reduces the size of branching state if too large
+        if branching_states.shape[0] > 500:
+            continue
+
+
+
+
+        # removes duplicate branches
+        branch_hashes, mask = np.unique(branch_hashes, return_index=True)
+        branching_states = branching_states[mask]
+        branching_states_minimal = branching_states_minimal[mask]
+
+
+        
         
         # queues are actaully pre-allocated arrays of memory that provide a means of quickly computing, selecting, searching
         # for world states given quering slices. the queues have five dimensions each, the first three for diveriging branches
@@ -452,7 +439,7 @@ def find_minimum_sick(state, nieghbour_indices):
         #
         # The different arrays are:
         #
-        #   - minial: the positions of each sick person that aim to infect the whole board
+        #   - minimal: the positions of each sick person that aim to infect the whole board
         #   - world: the worlds states after expanding the infection with 'spread_virus'
         #   - hash: keys that reprsent the state of each board.
         #
@@ -468,11 +455,11 @@ def find_minimum_sick(state, nieghbour_indices):
         for (p, i, j) in zip(*np.where(world_states == VULNERABLE)):
 
             # checks if adding a sick person at i, j will infect other parts of the board
-            if np.any(world_states[p][indices[i, j]] == SICK):
+            if np.any(world_states[p][neighbours_neighbours[i, j]] == SICK):
 
                 # copies previous state
                 _prev = world_states[p]
-                _state = _prev.copy()
+                _state = world_states[p].copy()
                 _minimal = minimal_states[p].copy()
 
                 # adds sick people 
@@ -482,7 +469,7 @@ def find_minimum_sick(state, nieghbour_indices):
                 # finds the new state of the board
                 _util_mask[p, i, j] = True
                 _minimal_queue[p, i, j] = _minimal
-                _world_queue[p, i, j] = _state = spread_virus(_state, nieghbour_indices)
+                _world_queue[p, i, j] = _state = spread_virus(_state, neighbours)
                 _hash_queue[p, i, j] = make_hash(_state)
         
         #
@@ -515,7 +502,7 @@ def find_minimum_sick(state, nieghbour_indices):
 
                     _new_world_state[i, j] = SICK
                     _new_minimal_state[i, j] = SICK
-                    _new_world_state = spread_virus(_new_world_state, nieghbour_indices)
+                    _new_world_state = spread_virus(_new_world_state, neighbours)
                     
                     new_hashes = np.append(new_hashes, make_hash(_new_world_state))
                     new_world_states = np.concatenate((new_world_states, _new_world_state.reshape((1, *shape))))
@@ -538,15 +525,12 @@ def find_minimum_sick(state, nieghbour_indices):
         world_states = _world_queue[_util_mask]
         minimal_states = _minimal_queue[_util_mask]
 
-        # short curcuits solution to avoid errors below
-        if world_states.size == 0:
-            return best_minimal
-
         # when duplicate world states are found, we want to take the case that has the minimal people sick to infect to world state
         # https://stackoverflow.com/questions/30003068/how-to-get-a-list-of-all-indices-of-repeated-elements-in-a-numpy-array
         _idx_sort = np.argsort(hashes)
         world_hashes, idx_start = np.unique(hashes[_idx_sort], return_index=True)
 
+        # NOTE THIS SHOULD ALL BE THE SAME??
         # gathers indicies with fewest sick in minial state for duplicate and non-duplicate world states.
         _temp_sort = []
         _minimal_sorted = np.sum(minimal_states == SICK, axis=(1,2))[_idx_sort]
