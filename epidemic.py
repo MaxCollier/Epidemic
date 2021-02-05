@@ -12,6 +12,8 @@ IMMUNE_KEY = 'I'
 VULNERABLE = 0
 VULNERABLE_KEY = '.'
 
+BRANCHING_LIMIT = 20
+
 state_encoder = {
     SICK_KEY: SICK,
     IMMUNE_KEY: IMMUNE,
@@ -158,46 +160,6 @@ def calculate_neighbours(shape):
     return neighbour_masks
 
 
-def calculate_neighbours_neighbours(shape, neighbour_masks):
-    """
-    Returns an array which provides masks to find the neighbours of neighbouring cells of each grid position. This arrray
-    follows the same principle design as 'calculate_neighbours' result. The retrieval of a neighbours neighbouring cells
-    grid positions can be found using:
-
-    >>> nn_indices[i, j]
-
-    where i is the row position and j in the column position of the cell we want to find our neighbours neighbours from.
-    Please see 'calculate_neighbours' documentation for a better explaination. 
-
-    Parameters
-    ----------
-    shape : tuple
-        dimensions of world
-
-    neighbour_masks : np.ndarray
-        result of 'neighbour_masks' in respect to the current world 
-
-    Returns
-    -------
-    neighbour_masks : np.ndarray
-        masks for finding neighbours nieghbouring cells for each grid position
-
-    """
-
-    nn_indices = np.zeros((*shape, *shape), dtype=np.bool)
-
-    # loops over all positions of grid
-    for (i, j) in zip(*np.where(np.ones(shape, dtype=np.bool))):
-
-        # finds neighbours of neighbours masks and colapses them with 'or' logic
-        nn_indices[i, j] = np.any(neighbour_masks[neighbour_masks[i, j]], axis=0)
-
-        # current position neighbours each neighbour, this is undone as it is typically irrelevant when using mask
-        nn_indices[i, j, i, j] = False
-
-    return nn_indices
-
-
 def spread_virus(state, neighbours):
     """
     Performs rule to spread the virus. If someone vulnerable is standing beside two sick people, then that person becomes
@@ -299,6 +261,29 @@ def find_minimum_sick(init_state, neighbours):
     The exist and move all at the same depth. Hence once one node returns a completed solution, then we will know that it
     is the best one the algorithm has made. 
 
+    # queues are actaully pre-allocated arrays of memory that provide a means of quickly computing, selecting, searching
+    # for world states given quering slices. the queues have five dimensions each, the first three for diveriging branches
+    # from state p, where a new sick cell is placed at (i, j). the second two dimensions are for the state of the world.
+    #
+    # an analogy to think of how this works is you could compare these 'queues' to some database (data being packed together
+    # in an effective encoding) and where a slice of three parameters (p: previous board state, i, j: new position of sick
+    # person) will return the world state after a person has been placed there. This is much more effective than using pure
+    # python array-likes as these arrays are effectively encoded in C structures where you can perfrom C implement metric 
+    # queries such as sum, mean, mask operations and other things.
+    # 
+    # it's important to note that it's expensive to compute the next world state from a current state, hence a computiation
+    # limiting condition has been added so that world states that will grauntee to infect neighbours will be 
+    #
+    # The different arrays are:
+    #
+    #   - minimal: the positions of each sick person that aim to infect the whole board
+    #   - world: the worlds states after expanding the infection with 'spread_virus'
+    #   - hash: keys that reprsent the state of each board.
+    #
+
+    # uncomment to see how fast it is generating it is searching through solutions
+    # print(minimal_states.shape)
+
     Parameters
     ----------
     init_state : np.array
@@ -334,16 +319,13 @@ def find_minimum_sick(init_state, neighbours):
     hash_type = f"<U{world_state.size}"
     final_state = init_state.copy()
     final_state[init_state == VULNERABLE] = SICK
-    neighbours_neighbours = calculate_neighbours_neighbours(dims, neighbours)
-
-    # todo could the hashes be removed? It seems likely
 
     # The initial branches need to be created in order for algorithm to work. Having at least one option to infect is 
     # guaranteed as virus has already been spread where 'world_state' is not a final state.
     vunerable_mask = world_state == VULNERABLE
     branching_states_minimal = np.zeros((np.sum(vunerable_mask), *dims)) # states before virus spreads
     branching_states = np.zeros((np.sum(vunerable_mask), *dims)) # states after virus spreads
-    branch_hashes = np.zeros(np.sum(vunerable_mask), dtype=hash_type)
+    branching_hashes = np.zeros(np.sum(vunerable_mask), dtype=hash_type)
 
     # initializes all branches with original states
     branching_states_minimal[:] = init_state
@@ -362,12 +344,7 @@ def find_minimum_sick(init_state, neighbours):
         branching_states[branch_idx] = spread_virus(branch_state, neighbours)
 
         # creates hashes for each branching decsision
-        branch_hashes[branch_idx] = make_hash(branching_states[branch_idx])
-
-
-    generation = 0
-    best_minimal = np.ones(dims)
-    best_minimal[init_state == IMMUNE] = IMMUNE
+        branching_hashes[branch_idx] = make_hash(branching_states[branch_idx])
 
     # THIS IS WHERE THE MAGIC HAPPENS
     while True:
@@ -377,220 +354,98 @@ def find_minimum_sick(init_state, neighbours):
         if np.any(solution_found):
             return branching_states_minimal[solution_found][0]
 
-        # pre-allocation of the next branching states from the current states
+        # pre-allocated buffers from next branching states
         prealloc_shape = (*branching_states.shape, *dims)
         next_branches = np.zeros(prealloc_shape)
         next_branches_minimal = np.zeros(prealloc_shape)
-        next_braches_mask = np.zeros(branching_states.shape, dtype=np.bool)
-        next_brach_hashes = np.empty(branching_states.shape, dtype=hash_type)
- 
-        # mask to identify which items in the queue were updated
-        # _util_mask = np.zeros(world_states.shape, dtype=np.bool)
+        next_branches_mask = np.zeros(branching_states.shape, dtype=np.bool)
+        next_branching_hashes = np.empty(branching_states.shape, dtype=hash_type)
 
-        # finds how placing a sick person in each part of the grid infects the rest of the grid. Process cannot be computed
-        # via a parrellel as non pure python context cannot be supplied to processes.
+        # makes every possible move from all current states in 'next_branches'
         for (p, i, j) in zip(*np.where(branching_states == VULNERABLE)):
+            next_branches_mask[p, i, j] = True
 
-            # checks if adding a sick person at i, j will infect other parts of the board
-            if np.any(world_states[p][neighbours_neighbours[i, j]] == SICK):
+            # copies previous state
+            state = branching_states[p].copy()
+            minimal = branching_states_minimal[p].copy()
 
-                # copies previous state
-                _prev = world_states[p]
-                _state = world_states[p].copy()
-                _minimal = minimal_states[p].copy()
+            # inserts sick people 
+            state[i, j] = SICK
+            minimal[i, j] = SICK
+            state = spread_virus(state, neighbours)
 
-                # adds sick people 
-                _state[i, j] = SICK
-                _minimal[i, j] = SICK
+            # places next states into buffers 
+            next_branches[p, i, j] = state
+            next_branches_minimal[p, i, j] = minimal
+            next_branching_hashes[p, i, j] = make_hash(state)
 
-                # finds the new state of the board
-                _util_mask[p, i, j] = True
-                _minimal_queue[p, i, j] = _minimal
-                _world_queue[p, i, j] = _state = spread_virus(_state, neighbours)
-                _hash_queue[p, i, j] = make_hash(_state)
+        # finds next branches from buffer by applying mask
+        next_branches = next_branches[next_branches_mask]
+        next_branches_minimal = next_branches_minimal[next_branches_mask]
+        next_branching_hashes = next_branching_hashes[next_branches_mask]
 
         # reduces the size of branching state if too large
-        if branching_states.shape[0] > 500:
-            continue
+        if branching_states.shape[0] > BRANCHING_LIMIT:
 
-
-
-
-        # removes duplicate branches
-        branch_hashes, mask = np.unique(branch_hashes, return_index=True)
-        branching_states = branching_states[mask]
-        branching_states_minimal = branching_states_minimal[mask]
-
-
-        
-        
-        # queues are actaully pre-allocated arrays of memory that provide a means of quickly computing, selecting, searching
-        # for world states given quering slices. the queues have five dimensions each, the first three for diveriging branches
-        # from state p, where a new sick cell is placed at (i, j). the second two dimensions are for the state of the world.
-        #
-        # an analogy to think of how this works is you could compare these 'queues' to some database (data being packed together
-        # in an effective encoding) and where a slice of three parameters (p: previous board state, i, j: new position of sick
-        # person) will return the world state after a person has been placed there. This is much more effective than using pure
-        # python array-likes as these arrays are effectively encoded in C structures where you can perfrom C implement metric 
-        # queries such as sum, mean, mask operations and other things.
-        # 
-        # it's important to note that it's expensive to compute the next world state from a current state, hence a computiation
-        # limiting condition has been added so that world states that will grauntee to infect neighbours will be 
-        #
-        # The different arrays are:
-        #
-        #   - minimal: the positions of each sick person that aim to infect the whole board
-        #   - world: the worlds states after expanding the infection with 'spread_virus'
-        #   - hash: keys that reprsent the state of each board.
-        #
-        _minimal_queue = np.zeros((*world_states.shape, *shape))
-        _world_queue = np.zeros((*world_states.shape, *shape))
-        _hash_queue = np.empty(world_states.shape, dtype=world_hashes.dtype)
- 
-        # mask to identify which items in the queue were updated
-        _util_mask = np.zeros(world_states.shape, dtype=np.bool)
-
-        # finds how placing a sick person in each part of the grid infects the rest of the grid. Process cannot be computed
-        # via a parrellel as non pure python context cannot be supplied to processes.
-        for (p, i, j) in zip(*np.where(world_states == VULNERABLE)):
-
-            # checks if adding a sick person at i, j will infect other parts of the board
-            if np.any(world_states[p][neighbours_neighbours[i, j]] == SICK):
-
-                # copies previous state
-                _prev = world_states[p]
-                _state = world_states[p].copy()
-                _minimal = minimal_states[p].copy()
-
-                # adds sick people 
-                _state[i, j] = SICK
-                _minimal[i, j] = SICK
-
-                # finds the new state of the board
-                _util_mask[p, i, j] = True
-                _minimal_queue[p, i, j] = _minimal
-                _world_queue[p, i, j] = _state = spread_virus(_state, neighbours)
-                _hash_queue[p, i, j] = make_hash(_state)
-        
-        #
-        # finds states that didn't update in previous generation and check if their current states can be progressed
-        # 
-
-        # creates empty array structures
-        new_world_states = np.zeros((0, *shape))
-        new_minimal_states = np.zeros((0, *shape))
-        new_hashes = np.empty(0, dtype=world_hashes.dtype)
-
-        # looks at blocked states and checks if other areas of the world can a sick person be placed
-        uncompleted_mask = np.sum(_util_mask == False, axis=(1,2)) == 0
-        for (idx,) in zip(*np.where(uncompleted_mask)):
+            # buffers branching states that are selected on performance
+            buffer_branches = np.zeros((0, *dims))
+            buffer_branches_minimal = np.zeros((0, *dims))
             
-            # selects values from array
-            new_state_created = False
-            _world_state = world_states[idx]
-            _minimal_state = world_states[idx]
+            # performance is based off how many sick people exist
+            branch_perfs = np.sum(next_branches == SICK, axis=(1,2))
 
-            # looks at positions where sick people have not been placed
-            for (i, j) in zip(*np.where(_world_state == VULNERABLE)):
+            # unique performance values are discovered from highest to lowest
+            unique_perfs = np.unique(branch_perfs)[::-1]
 
-                # checks that position does not directly neighbour a sick person, otherwise it can be considered a final state
-                # position. 
-                if np.sum(_world_state[neighbours] == SICK) == 0:
-                    new_state_created = True
-                    _new_world_state = _world_state.copy()
-                    _new_minimal_state = _minimal_state.copy()
+            # adds states until branching limit is reached
+            buffer_count = 0
+            for perf in unique_perfs:
 
-                    _new_world_state[i, j] = SICK
-                    _new_minimal_state[i, j] = SICK
-                    _new_world_state = spread_virus(_new_world_state, neighbours)
+                # finds all states at current performance
+                branches_mask = perf == branch_perfs
+                branches_count = np.sum(branches_mask)
+
+                # adds branches at current performance directly to buffer if enough space
+                if buffer_count + branches_count <= BRANCHING_LIMIT:
+
+                    # updates buffer count
+                    buffer_count += branches_count
                     
-                    new_hashes = np.append(new_hashes, make_hash(_new_world_state))
-                    new_world_states = np.concatenate((new_world_states, _new_world_state.reshape((1, *shape))))
-                    new_minimal_states = np.concatenate((new_minimal_states, _new_minimal_state.reshape((1, *shape))))
+                    # extends buffers with next best performing branches
+                    buffer_branches = np.concatenate((
+                        buffer_branches,
+                        next_branches[branches_mask]
+                    ))
+                    buffer_branches_minimal = np.concatenate((
+                        buffer_branches_minimal,
+                        next_branches_minimal[branches_mask]
+                    ))
 
-            # no future states to be generated so current state can be considered final and checked to see if it is the best
-            if not new_state_created:
-                for (i, j) in zip(*np.where(_world_state == VULNERABLE)):
-                    _minimal_state[i, j] = SICK
+                else:
+                    # fills remaining space in buffer with a randomized selection of branches at current performace  
+                    limit = BRANCHING_LIMIT - buffer_count
+                    randomize = np.random.permutation(branches_count)
 
-                if np.sum(_minimal_state == SICK) < np.sum(best_minimal == SICK):
-                    best_minimal = _minimal_state
+                    # extends buffers with these randomized branches
+                    buffer_branches = np.concatenate((
+                        buffer_branches, 
+                        next_branches[branches_mask][randomize][:limit]
+                    ))
+                    buffer_branches_minimal = np.concatenate((
+                        buffer_branches_minimal,
+                        next_branches_minimal[branches_mask][randomize][:limit]
+                    ))
 
-        #
-        # performs sorting of metrics and states for being able to remove duplicates effeciently.
-        #
+            # buffer now becomes next_branches as it holds the best selection of branches within limit
+            next_branches = buffer_branches
+            next_branches_minimal = buffer_branches_minimal
+            next_branching_hashes = np.array([make_hash(next_branches[i]) for i in range(BRANCHING_LIMIT)], dtype=hash_type)
 
-        # reduces arrays into states that where updated
-        hashes = _hash_queue[_util_mask]
-        world_states = _world_queue[_util_mask]
-        minimal_states = _minimal_queue[_util_mask]
+        # moves buffered 'next_branches' data into 'branching_states'
+        branching_states = next_branches
+        branching_hashes = next_branching_hashes
+        branching_states_minimal = next_branches_minimal
 
-        # when duplicate world states are found, we want to take the case that has the minimal people sick to infect to world state
-        # https://stackoverflow.com/questions/30003068/how-to-get-a-list-of-all-indices-of-repeated-elements-in-a-numpy-array
-        _idx_sort = np.argsort(hashes)
-        world_hashes, idx_start = np.unique(hashes[_idx_sort], return_index=True)
-
-        # NOTE THIS SHOULD ALL BE THE SAME??
-        # gathers indicies with fewest sick in minial state for duplicate and non-duplicate world states.
-        _temp_sort = []
-        _minimal_sorted = np.sum(minimal_states == SICK, axis=(1,2))[_idx_sort]
-        _minimal_split = np.split(_idx_sort, idx_start[1:])
-        for split in _minimal_split:
-            idx = np.argmin(_minimal_sorted[split])
-            _temp_sort.append(split[idx])
-
-        _idx_sort = np.array(_temp_sort)
-        
-        # applies mask to remove duplicates world states
-        world_states = world_states[_idx_sort]
-        minimal_states = minimal_states[_idx_sort]
-
-        # appends new states that have been generated to minimal_states
-        world_hashes = np.append(world_hashes, new_hashes)
-        world_states = np.concatenate((world_states, new_world_states))
-        minimal_states = np.concatenate((minimal_states, new_minimal_states))
-
-        # updates new best minimum mask, this requires one of the world states to have no vulnerable
-        completed_mask = np.all(world_states == final_state, axis=(1, 2))
-        if np.any(completed_mask):
-            [_minimal_state] = minimal_states[completed_mask]
-            if np.sum(_minimal_state == SICK) < np.sum(best_minimal == SICK):
-                best_minimal = _minimal_state
-
-        # removes cases where there are more states cannot be better than 'best_minimal'
-        _count = np.sum(world_states == SICK, axis=(1,2))
-        _minimal = np.sum(minimal_states == SICK, axis=(1,2))
-        mask = ~completed_mask & (_minimal < np.sum(best_minimal == SICK))
-        
-        # applies filter to get the best 750 searches based on the ratio between how many people have become sick
-        # from how many people sick there are
-        if generation >= 2 and np.sum(mask) >= 500:
-            
-            # computes ratios for each state and find bins for how much each ratio will remove
-            ratio = _count / _minimal
-            _ratio = ratio[mask]
-            ratios = np.unique(_ratio)
-
-            # finds a ratio cut off which allows for at most 1000 search cases to persist
-            remove_bins = np.array([ np.sum(_r < _ratio) for _r in ratios ])
-            bin_idx = np.argmin(np.abs(remove_bins - 500))
-            ratio_cutoff = ratios[bin_idx]
-
-            # applies cutoff to mask
-            mask[mask] &= ratio_cutoff < _ratio
-
-        # removes states that have failed some condition stated in the few paragraphs above
-        world_hashes = world_hashes[mask]
-        world_states = world_states[mask]
-        minimal_states = minimal_states[mask]
-
-        generation += 1
-
-        # uncomment to see how fast it is generating it is searching through solutions
-        # print(minimal_states.shape)
-        
-    return best_minimal
-    
 
 def read_input():
     """
@@ -675,6 +530,8 @@ def handle_args():
 
     """
 
+    global BRANCHING_LIMIT
+
     parser = argparse.ArgumentParser(
         description="Algorithms to solve the game Epidemic. Mode B provide a semi-evolutionary algorithm to solve problem"\
                    " in polynomial time."
@@ -692,7 +549,7 @@ def handle_args():
             "can infect the entire non-immune population"
     )
     parser.add_argument(
-        '--pool-maximum', '-n', type=int, default=500,
+        '--pool-maximum', '-n', type=int, default=BRANCHING_LIMIT, dest="branching_limit",
         help="Hyperparameter for algorithm defining the maximum number of best performing state instances that can exist "\
             "between generations. Only useful when '-b' is used."
     )
@@ -701,7 +558,11 @@ def handle_args():
         help="Show information between generations when evolutionary algorithm is running"
     )
 
-    return parser.parse_args()
+    # updates global variable
+    args = parser.parse_args()
+    BRANCHING_LIMIT = args.branching_limit
+
+    return args
 
 
 def main():
