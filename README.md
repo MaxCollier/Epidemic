@@ -1,6 +1,6 @@
 # Epidemic
 
-An evolutionary algorithm for solving the based game Epidemic. 
+An evolutionary algorithm for solving the game Epidemic. 
 
 ## Game and Rules
 
