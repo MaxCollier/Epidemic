@@ -35,7 +35,7 @@ The drawback to this algorithm is that it operates in a greedy fashion, only eve
 
 By searching multiple branches at once, we infact reduce the bias that the algorithm will only find local minina solutions rather than finding a global optimal solution as we are searching a greater represantion of the state tree. This greater representation means that we are more likely to uncover more of the error, or 'performance' surface that will lead some branching solutions to the optimal.
 
-#### Using An Iterative Algorithm
+## Using An Iterative Algorithm
 
 The first issue we have when implementing an randomized iterative algorithm is how do we know when to stop if we can't find a solution? Using some threshold _t_ can be a useful means of making this decision. However, then we will ask the question of what is an appropriate threshold for _t_?
 
