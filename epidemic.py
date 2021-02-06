@@ -26,14 +26,6 @@ state_decoder = {
     VULNERABLE: VULNERABLE_KEY,
 }
 
-# todo, this can be improved with only checking states where there is alraedy ONE sick person
-# beside a vulnerable person...
-
-# does the initial search states need to exist if we have a variable to count how many sick their are?
-
-# read up about greedy algorithms and see if mine is just an alternative to something else
-# that exists.
-
 
 def make_hash(world):
     """
@@ -254,35 +246,24 @@ def solve_with_identity(state):
 
 def find_minimum_sick(init_state, neighbours):
     """
-    Solves for solution to mode b using an evolutionary performance alogrithm to find the minimum number of additional sick
-    people required to infect the entire population.
+    Solves for solution to problem B through using an evolutionary alogrithm. This will find the minimum number of 
+    additional infectious people required to infect the entire non-immune population.
 
-    spr_branches represents all the nodes of the state tree local at their local decisions with forsight of a single move.
-    The exist and move all at the same depth. Hence once one node returns a completed solution, then we will know that it
-    is the best one the algorithm has made. 
+    The evolutionary algorithm works by searching down the tree of all possible states one level at a time - starting from
+    an initial state. Once gathering all the branching states on some level, we then reduce our collection to the best 
+    performing set of states under some branching threshold 'BRANCHING_LIMIT' - is changable through command line arguments.
+    We can compare states by checking the performance of how well each state has spread the virus. Once the number of 
+    branches has been reduced within the threshold, we then repeat, finding the next set of possible states from our current
+    branches until we find a solution.
 
-    # queues are actaully pre-allocated arrays of memory that provide a means of quickly computing, selecting, searching
-    # for world states given quering slices. the queues have five dimensions each, the first three for diveriging branches
-    # from state p, where a new sick cell is placed at (i, j). the second two dimensions are for the state of the world.
-    #
-    # an analogy to think of how this works is you could compare these 'queues' to some database (data being packed together
-    # in an effective encoding) and where a slice of three parameters (p: previous board state, i, j: new position of sick
-    # person) will return the world state after a person has been placed there. This is much more effective than using pure
-    # python array-likes as these arrays are effectively encoded in C structures where you can perfrom C implement metric 
-    # queries such as sum, mean, mask operations and other things.
-    # 
-    # it's important to note that it's expensive to compute the next world state from a current state, hence a computiation
-    # limiting condition has been added so that world states that will grauntee to infect neighbours will be 
-    #
-    # The different arrays are:
-    #
-    #   - minimal: the positions of each sick person that aim to infect the whole board
-    #   - world: the worlds states after expanding the infection with 'spread_virus'
-    #   - hash: keys that reprsent the state of each board.
-    #
+    There are two variables reqiured to manage the search through the state tree. These are 'branching_states_minimal' and
+    'branching_states'. 'branching_states_minimal' is the array of the states before the virus has been spread throughout
+    the population. This is required as this array will provide the state where the minimal number of sick people to infect
+    the entire non-immune population has been found. 'branching_states' is required as it keeps an array of all the related
+    states of 'branching_states_minimal' once the virus has spread for each minimal state. This is required as it avoids 
+    recomputing the spread of the virus for each state and provides a cache for evaluating performances.
 
-    # uncomment to see how fast it is generating it is searching through solutions
-    # print(minimal_states.shape)
+    This happens within an infinite loop where once a solution is found it will be returned by the function.
 
     Parameters
     ----------
@@ -425,6 +406,7 @@ def find_minimum_sick(init_state, neighbours):
                     # fills remaining space in buffer with a randomized selection of branches at current performace  
                     limit = BRANCHING_LIMIT - buffer_count
                     randomize = np.random.permutation(branches_count)
+                    buffer_count += limit
 
                     # extends buffers with these randomized branches
                     buffer_branches = np.concatenate((
@@ -439,7 +421,7 @@ def find_minimum_sick(init_state, neighbours):
             # buffer now becomes next_branches as it holds the best selection of branches within limit
             next_branches = buffer_branches
             next_branches_minimal = buffer_branches_minimal
-            next_branching_hashes = np.array([make_hash(next_branches[i]) for i in range(BRANCHING_LIMIT)], dtype=hash_type)
+            next_branching_hashes = np.array([make_hash(next_branches[i]) for i in range(buffer_count)], dtype=hash_type)
 
         # moves buffered 'next_branches' data into 'branching_states'
         branching_states = next_branches
